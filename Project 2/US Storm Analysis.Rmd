@@ -1,0 +1,178 @@
+---
+title: "US Storm Analysis"
+author: "Dinh Tuan Phan"
+date: "4/29/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+
+# Data Processing
+### Load packages and data
+
+```{r}
+library("data.table")
+library("ggplot2")
+
+stormDT <- read.csv('repdata_data_StormData.csv')
+stormDT <- as.data.table(stormDT)
+
+```
+
+
+### First look at data
+
+```{r}
+summary(stormDT)
+names(stormDT)
+```
+
+### Subsetting data
+
+```{r}
+cols2Remove <- colnames(stormDT[, !c("EVTYPE"
+  , "FATALITIES"
+  , "INJURIES"
+  , "PROPDMG"
+  , "PROPDMGEXP"
+  , "CROPDMG"
+  , "CROPDMGEXP")])
+
+stormDT[, c(cols2Remove) := NULL]
+
+stormDT <- stormDT[(EVTYPE != "?" & 
+             (INJURIES > 0 | FATALITIES > 0 | PROPDMG > 0 | CROPDMG > 0)), c("EVTYPE"
+                                                                            , "FATALITIES"
+                                                                            , "INJURIES"
+                                                                            , "PROPDMG"
+                                                                            , "PROPDMGEXP"
+                                                                            , "CROPDMG"
+                                                                            , "CROPDMGEXP") ]
+
+```
+
+
+
+Mapping data includes converting letters (thousand K, million M, billion B) to real numbers
+
+```{r}
+
+cols <- c("PROPDMGEXP", "CROPDMGEXP")
+stormDT[,  (cols) := c(lapply(.SD, toupper)), .SDcols = cols]
+
+propDmgKey <-  c("\"\"" = 10^0,
+                 "-" = 10^0, 
+                 "+" = 10^0,
+                 "0" = 10^0,
+                 "1" = 10^1,
+                 "2" = 10^2,
+                 "3" = 10^3,
+                 "4" = 10^4,
+                 "5" = 10^5,
+                 "6" = 10^6,
+                 "7" = 10^7,
+                 "8" = 10^8,
+                 "9" = 10^9,
+                 "H" = 10^2,
+                 "K" = 10^3,
+                 "M" = 10^6,
+                 "B" = 10^9)
+
+cropDmgKey <-  c("\"\"" = 10^0,
+                "?" = 10^0, 
+                "0" = 10^0,
+                "K" = 10^3,
+                "M" = 10^6,
+                "B" = 10^9)
+
+stormDT[, PROPDMGEXP := propDmgKey[as.character(stormDT[,PROPDMGEXP])]]
+stormDT[is.na(PROPDMGEXP), PROPDMGEXP := 10^0 ]
+
+stormDT[, CROPDMGEXP := cropDmgKey[as.character(stormDT[,CROPDMGEXP])] ]
+stormDT[is.na(CROPDMGEXP), CROPDMGEXP := 10^0 ]
+
+```
+
+
+Making new column
+
+```{r}
+stormDT <- stormDT[, .(EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, propCost = PROPDMG * PROPDMGEXP, CROPDMG, CROPDMGEXP, cropCost = CROPDMG * CROPDMGEXP)]
+
+```
+
+### Total property and crop cost
+
+```{r}
+totalCostDT <- stormDT[, .(propCost = sum(propCost), cropCost = sum(cropCost), Total_Cost = sum(propCost) + sum(cropCost)), by = .(EVTYPE)]
+
+totalCostDT <- totalCostDT[order(-Total_Cost), ]
+
+totalCostDT <- totalCostDT[1:10, ]
+
+head(totalCostDT, 10)
+```
+
+### Total fatalities and injuries
+
+```{r}
+totalInjuriesDT <- stormDT[, .(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES), totals = sum(FATALITIES) + sum(INJURIES)), by = .(EVTYPE)]
+
+totalInjuriesDT <- totalInjuriesDT[order(-FATALITIES), ]
+
+totalInjuriesDT <- totalInjuriesDT[1:10, ]
+
+head(totalInjuriesDT, 10)
+```
+
+
+
+# Results
+### Most harmful events to population health
+
+```{r}
+bad_stuff <- melt(totalInjuriesDT, id.vars="EVTYPE", variable.name = "bad_thing")
+head(bad_stuff, 10)
+
+```
+
+```{r}
+healthChart <- ggplot(bad_stuff, aes(x=reorder(EVTYPE, -value), y=value))
+healthChart = healthChart + geom_bar(stat="identity", aes(fill=bad_thing), position="dodge")
+healthChart = healthChart + theme(axis.text.x = element_text(angle=45, hjust=1))
+healthChart = healthChart + xlab("Natural Event") 
+healthChart = healthChart + ylab("Frequency") 
+healthChart = healthChart + ggtitle("Top 10 US Natural Events") + theme(plot.title = element_text(hjust = 0.5)) + guides(fill=guide_legend(title="Damage")) + scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))
+healthChart
+```
+
+
+
+### Most damaged events to economic
+
+
+```{r}
+econ_consequences <- melt(totalCostDT, id.vars="EVTYPE", variable.name = "Damage_Type")
+head(econ_consequences, 10)
+```
+
+```{r}
+econChart <- ggplot(econ_consequences, aes(x=reorder(EVTYPE, -value), y=value))
+econChart = econChart + theme(axis.text.x = element_text(angle=45, hjust=1))
+econChart = econChart + geom_bar(stat="identity", aes(fill=Damage_Type), position="dodge")
+econChart = econChart + xlab("Event")
+econChart = econChart + ylab("Total Cost") 
+econChart = econChart + ggtitle("Top 10 US Events Impacting to Economic") + theme(plot.title = element_text(hjust = 1)) + guides(fill=guide_legend(title="Damage")) + scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))
+econChart
+```
+
+
